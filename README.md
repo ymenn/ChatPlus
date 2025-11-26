@@ -17,6 +17,7 @@ Super mega big architecture, dependency injected, quantum, multi-threaded, mega 
 ## TODO
 
 - [ ] Make messages pretty
+- [ ] Localize messages
 - [ ] Fix steamid targetting (doesn't work oops)
 - [ ] Add some logic to prevent spam of unblock message
 
