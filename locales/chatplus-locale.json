@@ -1,0 +1,26 @@
+{
+    "ChatPlus.TargetNotFound": {
+        "en-us": "[PM] Couldn't find target called {0}"
+    },
+    "ChatPlus.MessageInbound": {
+        "en-us": "(from ->) {0}: {1}"
+    },
+    "ChatPlus.MessageOutbound": {
+        "en-us": "(to ->) {0}: {1}"
+    },
+    "ChatPlus.PmCommand.Usage": {
+        "en-us": "[PM] Usage: ms_pm <player_name|#steam_id|#userid> <message>"
+    },
+    "ChatPlus.PmCommand.UserBlockedYou": {
+        "en-us": "[PM] The user {0} has blocked you from sending them private messages."
+    },
+    "ChatPlus.PmBlockCommand.Usage": {
+        "en-us": "[PM] Usage: ms_pmblock <player_name|#steam_id|#userid>"
+    },
+    "ChatPlus.PmBlockCommand.BlockedSuccessfully": {
+        "en-us": "[PM] Private messages from {0} blocked."
+    },
+    "ChatPlus.PmBlockCommand.UnblockedSuccessfully": {
+        "en-us": "[PM] Private messages from {0} unblocked."
+    }
+}

@@ -1,12 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using Sharp.Modules.LocalizerManager.Shared;
 using Sharp.Shared;
 using Sharp.Shared.Enums;
+using Sharp.Shared.Managers;
 using Sharp.Shared.Objects;
 using Sharp.Shared.Types;
 
@@ -20,8 +27,11 @@ public class ChatPlus : IModSharpModule
     private readonly ServiceProvider _serviceProvider;
     private readonly ISharedSystem _sharedSystem;
     private readonly Targeting? _targeting;
-
-    private Dictionary<IGameClient, HashSet<IGameClient>> blockedPlayers = [];
+    private readonly Dictionary<IGameClient, HashSet<IGameClient>> blockedPlayers = [];
+    private readonly ISharpModuleManager _modules;
+    private IModSharpModuleInterface<ILocalizerManager>? _cachedLocalizerInterface;
+    private readonly string? _webhookUrl;
+    private readonly HttpClient _httpClient;
 
     public ChatPlus(
         ISharedSystem sharedSystem,
@@ -54,76 +64,76 @@ public class ChatPlus : IModSharpModule
         _logger = sharedSystem.GetLoggerFactory().CreateLogger<ChatPlus>();
         _serviceProvider = services.BuildServiceProvider();
         _targeting = _serviceProvider.GetService<Targeting>();
+
+        _modules = _sharedSystem.GetSharpModuleManager();
+
+        _webhookUrl = configuration.GetValue<string>("webhookUrl");
+        _httpClient = new();
     }
 
     public bool Init()
     {
         _sharedSystem.GetClientManager().InstallCommandCallback("pm", OnPmCommand);
         _sharedSystem.GetClientManager().InstallCommandCallback("pmblock", OnPmBlockCommand);
-        _sharedSystem.GetClientManager().InstallCommandCallback("test", OnTestCommand);
-        // _sharedSystem.GetConVarManager().CreateServerCommand("ms_pm", OnPmConsoleCommand);
 
         _logger.LogInformation("ChatPlus Init");
         return true;
+    }
+
+    public void OnAllModulesLoaded()
+    {
+        GetLocalizerInterface()?.LoadLocaleFile("chatplus-locale");
     }
 
     public void Shutdown()
     {
         _sharedSystem.GetClientManager().RemoveCommandCallback("pm", OnPmCommand);
         _sharedSystem.GetClientManager().RemoveCommandCallback("pmblock", OnPmBlockCommand);
-        _sharedSystem.GetClientManager().RemoveCommandCallback("test", OnTestCommand);
-        // _sharedSystem.GetConVarManager().ReleaseCommand("ms_pm");
-
+        _httpClient.Dispose();
         _logger.LogInformation("ChatPlus Shutdown");
     }
 
-    // public ECommandAction OnPmConsoleCommand(StringCommand command)
-    // {
-    //     if (command.ArgCount == 0)
-    //         return ECommandAction.Stopped;
-
-    //     string messageString = command.GetCommandString();
-    //     IGameClient? target = _targeting?.FindTarget(messageString);
-
-    //     if (target is null)
-    //     {
-    //         _logger.LogInformation($"[PM] Couldn't find target called {messageString}");
-    //         return ECommandAction.Stopped;
-    //     }
-
-    //     if (target.GetPlayerController() is { } targetController)
-    //     {
-    //         string feedbackMessage = $"[PM To] {target.Name}: {messageString}";
-    //         _logger.LogInformation(feedbackMessage);
-    //         string sentMessage = $"[PM From] *CONSOLE*: {messageString}";
-    //         targetController.Print(HudPrintChannel.Chat, sentMessage);
-    //     }
-    //     else
-    //     {
-    //         _logger.LogInformation("[PM] Failed to get player controller, message not delivered.");
-    //     }
-    //     return ECommandAction.Handled;
-    // }
-
-    public ECommandAction OnTestCommand(IGameClient caller, StringCommand command)
+    public async Task SendLogToWebhook(string message)
     {
-        caller.GetPlayerController()?.Print(HudPrintChannel.Chat, command.ArgString);
-        caller
-            .GetPlayerController()
-            ?.Print(HudPrintChannel.Chat, $"Called cmd with arg count: {command.ArgCount}...");
+        try
+        {
+            var webhookContent = new DiscordWebhookPayload(message);
+            var jsonPayload = JsonConvert.SerializeObject(webhookContent);
+            var requestContent = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-        return ECommandAction.Handled;
+            HttpResponseMessage response = await _httpClient.PostAsync(_webhookUrl, requestContent);
+            response.EnsureSuccessStatusCode();
+        }
+        catch (Exception e)
+        {
+            _logger.LogError("Failed to send message through webhook. Message: {exception}", e);
+        }
+    }
+
+    private ILocalizerManager? GetLocalizerInterface()
+    {
+        if (_cachedLocalizerInterface?.Instance is null)
+        {
+            _cachedLocalizerInterface = _modules.GetOptionalSharpModuleInterface<ILocalizerManager>(
+                ILocalizerManager.Identity
+            );
+        }
+
+        return _cachedLocalizerInterface?.Instance;
     }
 
     public ECommandAction OnPmCommand(IGameClient caller, StringCommand command)
     {
+        var localizer = GetLocalizerInterface()?.GetLocalizer(caller);
         if (command.ArgCount < 2)
         {
             caller
                 .GetPlayerController()
                 ?.Print(
                     HudPrintChannel.Chat,
-                    "[PM] Usage: ms_pm <player_name|#steam_id|#userid> <message>"
+                    localizer is { }
+                        ? localizer.Format("ChatPlus.PmCommand.Usage")
+                        : "[PM] Usage: ms_pm <player_name|#steam_id|#userid> <message>"
                 );
             return ECommandAction.Stopped;
         }
@@ -134,9 +144,15 @@ public class ChatPlus : IModSharpModule
         {
             caller
                 .GetPlayerController()
-                ?.Print(HudPrintChannel.Chat, $"[PM] Couldn't find target called {targetString}");
+                ?.Print(
+                    HudPrintChannel.Chat,
+                    localizer is { }
+                        ? localizer.Format("ChatPlus.TargetNotFound", targetString)
+                        : $"[PM] Couldn't find target called {targetString}"
+                );
             return ECommandAction.Stopped;
         }
+
         if (
             blockedPlayers.TryGetValue(target, out HashSet<IGameClient>? blockedSet)
             && blockedSet?.Contains(caller) == true
@@ -146,7 +162,9 @@ public class ChatPlus : IModSharpModule
                 .GetPlayerController()
                 ?.Print(
                     HudPrintChannel.Chat,
-                    $"[PM] The user {target.Name} has blocked you from sending them PMs."
+                    localizer is { }
+                        ? localizer.Format("ChatPlus.PmCommand.UserBlockedYou", target.Name)
+                        : $"[PM] The user {target.Name} has blocked you from sending them private messages."
                 );
             return ECommandAction.Stopped;
         }
@@ -154,24 +172,35 @@ public class ChatPlus : IModSharpModule
         int targetArgStartIndex = command.ArgString.IndexOf(targetString);
         string messageString = command.ArgString.Remove(targetArgStartIndex, targetString.Length);
 
-        string sentMessage = $"(from ->) {caller.Name}: {messageString}";
+        string sentMessage = localizer is { }
+            ? localizer.Format("ChatPlus.MessageInbound", caller.Name, messageString)
+            : $"(from ->) {caller.Name}: {messageString}";
         target.GetPlayerController()?.Print(HudPrintChannel.Chat, sentMessage);
 
-        string feedbackMessage = $"(to ->) {target.Name}: {messageString}";
+        string feedbackMessage = localizer is { }
+            ? localizer.Format("ChatPlus.MessageOutbound", target.Name, messageString)
+            : $"(to ->) {target.Name}: {messageString}";
         caller.GetPlayerController()?.Print(HudPrintChannel.Chat, feedbackMessage);
+
+        string logMessage = $"{caller.Name} -> {target.Name} : {messageString}";
+        _ = SendLogToWebhook(logMessage);
 
         return ECommandAction.Handled;
     }
 
     public ECommandAction OnPmBlockCommand(IGameClient caller, StringCommand command)
     {
+        var localizer = GetLocalizerInterface()?.GetLocalizer(caller);
+
         if (command.ArgCount == 0)
         {
             caller
                 .GetPlayerController()
                 ?.Print(
                     HudPrintChannel.Chat,
-                    "[PM] Usage: ms_pmblock <player_name|#steam_id|#userid>"
+                    localizer is { }
+                        ? localizer.Format("ChatPlus.PmBlockCommand.Usage")
+                        : "[PM] Usage: ms_pmblock <player_name|#steam_id|#userid>"
                 );
             return ECommandAction.Stopped;
         }
@@ -185,7 +214,12 @@ public class ChatPlus : IModSharpModule
         {
             caller
                 .GetPlayerController()
-                ?.Print(HudPrintChannel.Chat, $"[PM] Couldn't find target {targetString}");
+                ?.Print(
+                    HudPrintChannel.Chat,
+                    localizer is { }
+                        ? localizer.Format("ChatPlus.TargetNotFound", targetString)
+                        : $"[PM] Couldn't find target {targetString}"
+                );
             return ECommandAction.Stopped;
         }
 
@@ -198,7 +232,12 @@ public class ChatPlus : IModSharpModule
                     .GetPlayerController()
                     ?.Print(
                         HudPrintChannel.Chat,
-                        $"[PM] Private messages from {targetPlayer.Name} blocked."
+                        localizer is { }
+                            ? localizer.Format(
+                                "ChatPlus.PmBlockCommand.BlockedSuccessfully",
+                                targetString
+                            )
+                            : $"[PM] Private messages from {targetPlayer.Name} blocked."
                     );
                 return ECommandAction.Handled;
             }
@@ -207,15 +246,14 @@ public class ChatPlus : IModSharpModule
                 .GetPlayerController()
                 ?.Print(
                     HudPrintChannel.Chat,
-                    $"[PM] Private messages from {targetPlayer.Name} unblocked."
+                    localizer is { }
+                        ? localizer.Format(
+                            "ChatPlus.PmBlockCommand.UnblockedSuccessfully",
+                            targetString
+                        )
+                        : $"[PM] Private messages from {targetPlayer.Name} unblocked."
                 );
 
-            targetPlayer
-                .GetPlayerController()
-                ?.Print(
-                    HudPrintChannel.Chat,
-                    $"[PM] {caller.Name} has unblocked you from receiving PMs."
-                );
             return ECommandAction.Handled;
         }
 
@@ -224,7 +262,9 @@ public class ChatPlus : IModSharpModule
             .GetPlayerController()
             ?.Print(
                 HudPrintChannel.Chat,
-                $"[PM] Private messages from {targetPlayer.Name} blocked."
+                localizer is { }
+                    ? localizer.Format("ChatPlus.PmBlockCommand.BlockedSuccessfully", targetString)
+                    : $"[PM] Private messages from {targetPlayer.Name} blocked."
             );
 
         return ECommandAction.Handled;
