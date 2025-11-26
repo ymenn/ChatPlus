@@ -28,8 +28,8 @@ public class Targeting(ILogger<Targeting> logger, ISharedSystem sharedSystem)
                 .GetModSharp()
                 .GetIServer()
                 .GetGameClients(true, true)
-                .First(player =>
-                    player.UserId.AsPrimitive() == id || player.SteamId.AccountId == id
+                .FirstOrDefault(player =>
+                    player.UserId.AsPrimitive() == id || player.SteamId == id
                 );
 
             if (match is { IsAuthenticated: true })

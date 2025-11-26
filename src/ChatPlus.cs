@@ -1,15 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using ChatPlus.DiscordWebhookModels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 using Sharp.Modules.LocalizerManager.Shared;
 using Sharp.Shared;
 using Sharp.Shared.Enums;
@@ -68,6 +69,12 @@ public class ChatPlus : IModSharpModule
         _modules = _sharedSystem.GetSharpModuleManager();
 
         _webhookUrl = configuration.GetValue<string>("webhookUrl");
+        if (string.IsNullOrEmpty(_webhookUrl))
+        {
+            _logger.LogWarning(
+                "No webhook URL found in Configuration.json. Private messages will not be sent to webhook."
+            );
+        }
         _httpClient = new();
     }
 
@@ -93,12 +100,35 @@ public class ChatPlus : IModSharpModule
         _logger.LogInformation("ChatPlus Shutdown");
     }
 
-    public async Task SendLogToWebhook(string message)
+    public async Task SendLogToWebhook(IGameClient? sender, IGameClient recipient, string message)
     {
+        if (string.IsNullOrEmpty(_webhookUrl))
+            return;
+
         try
         {
-            var webhookContent = new DiscordWebhookPayload(message);
-            var jsonPayload = JsonConvert.SerializeObject(webhookContent);
+            int embedColor = 0x3498DB;
+
+            var embed = new Embed
+            {
+                Title = "Private Message Log",
+                Description =
+                    $"**Sender:** {sender?.Name ?? "Unknown"} ({sender?.SteamId.ToString() ?? "N/A"})\n"
+                    + $"**Recipient:** {recipient.Name} ({recipient.SteamId})\n"
+                    + $"**Message:** ```\n{message}\n```",
+                Color = embedColor,
+                Timestamp = DateTime.UtcNow,
+            };
+
+            var webhookContent = new DiscordWebhookPayload();
+            webhookContent.Embeds.Add(embed);
+
+            var serializerSettings = new JsonSerializerSettings
+            {
+                ContractResolver = new CamelCasePropertyNamesContractResolver(),
+            };
+
+            var jsonPayload = JsonConvert.SerializeObject(webhookContent, serializerSettings);
             var requestContent = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
             HttpResponseMessage response = await _httpClient.PostAsync(_webhookUrl, requestContent);
@@ -182,8 +212,7 @@ public class ChatPlus : IModSharpModule
             : $"(to ->) {target.Name}: {messageString}";
         caller.GetPlayerController()?.Print(HudPrintChannel.Chat, feedbackMessage);
 
-        string logMessage = $"{caller.Name} -> {target.Name} : {messageString}";
-        _ = SendLogToWebhook(logMessage);
+        _ = SendLogToWebhook(caller, target, messageString);
 
         return ECommandAction.Handled;
     }
