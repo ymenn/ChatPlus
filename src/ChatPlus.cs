@@ -107,7 +107,7 @@ public class ChatPlus : IModSharpModule
 
         try
         {
-            int embedColor = 0x3498DB;
+            int embedColor = 0x00ff11ff; // #00ff11ff
 
             var embed = new Embed
             {
