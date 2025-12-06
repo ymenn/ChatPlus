@@ -1,12 +1,17 @@
 # ChatPlus - Modsharp Plugin
 
-Super mega big architecture, dependency injected, quantum, multi-threaded, mega optimized plugin for sending PMs from one user to another.
+A simple plugin for private messaging between players for cs2's Modsharp framework.
 
 ## Features
 
-- [X] Send PMS
-- [X] Block PMS
+- [X] Send PMs
+- [X] Block PMs
 - [x] Send PMs to webhook
+
+## Planned Features
+- [ ] Staff all chat announcements
+- [ ] Player -> Staff private chat (only staff could see)
+_waiting for admin manager to implement these with standardized permission management_
 
 ## Commands
 
