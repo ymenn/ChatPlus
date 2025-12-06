@@ -1,6 +1,6 @@
 # ChatPlus - Modsharp Plugin
 
-A simple plugin for private messaging between players for cs2's Modsharp framework.
+A simple plugin for private messaging between players for cs2's [Modsharp](https://github.com/Kxnrl/modsharp-public) framework.
 
 ## Features
 
